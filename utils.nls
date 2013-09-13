@@ -1,0 +1,50 @@
+
+
+
+;;;;;;;;;;;;;;;;;
+;; Local utilities
+;;;;;;;;;;;;;;;;;
+
+;;Concerning Network:
+;;-from experiences, need to add rerouting procedures
+;;-take into account density (cf "multiscale granular flow etc")
+;;-idem for impedance, will have a crucial role in case of a modification
+
+to snapshot
+  nw:set-snapshot abstract-nodes abstract-links
+  ask abstract-links [
+    ;;links will be weighted by impedance and local density
+    ;;let take mean of impedance of both ends since links are between two patches necessarly
+    ;;idem for density
+    let i ([[impedance] of patch-here] of end1 + [[impedance] of patch-here] of end2) / 2
+    let density ([[count pietons-here] of patch-here] of end1 + [[count pietons-here] of patch-here] of end2) / 2
+    ;;by hypothesis i is never zero
+    let dd 0 ask end1 [set dd distance other-end] set d (dd * (1 + density) / i) 
+  ]
+end
+
+to build-abstract-network
+  ask patches with [not is-wall?] [sprout-abstract-nodes 1 [set hidden? true]]
+  ask abstract-nodes [create-abstract-links-with other abstract-nodes in-radius 1.5 [set hidden? true]]
+  snapshot
+end
+
+to test-network
+  ask abstract-links [set hidden? true] ask abstract-nodes [set hidden? true]
+  let o one-of abstract-nodes let dest nobody
+  ask o [set dest one-of other abstract-nodes]
+  snapshot
+  ask o [let path nw:weighted-path-to dest "d" if path != false [foreach path [ask ? [set hidden? false set color green]]]]
+end
+
+
+
+
+to color-patches
+  ;let ma max [impedance] of patches
+  ;let mi min [impedance] of patches
+  ;ifelse ma > mi [ask patches [set pcolor scale-color grey impedance mi ma]][ask patches [set pcolor white]]
+  ;if length objectives > 0 [foreach objectives [ ask ? [set pcolor red]]]
+end
+
+

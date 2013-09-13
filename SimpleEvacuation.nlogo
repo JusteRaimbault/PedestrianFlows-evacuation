@@ -1,6 +1,13 @@
 extensions[table nw gis]
 
 
+__includes[
+  "setup.nls" 
+  "utils.nls"
+]
+
+
+
 globals [
   
   ;;we will add to the impedance field some objective points and canonicals paths
@@ -15,9 +22,14 @@ globals [
   ;;same with origin points
   origins
   
+  ;;remaining persons to evacuate
+  remaining-pietons
+  
+  ;;Outputs:
   
   ;;count of waiting people: proxy of congestion
-  
+  ;;evacuation time
+  ;;local density?
    
 ]
 
@@ -38,6 +50,12 @@ patches-own [
   
   ;;we won't handle infinite value for impedance
   is-wall?
+  
+  ;;initial position of agent
+  is-initial?
+  
+  ;;source if creation of agents
+  is-source?
 ]
 
 
@@ -57,8 +75,18 @@ pietons-own[
   ;;the guy will not follow it deterministically but will however
   ;;follow the global scheme
   trajectory
-  
   current-target
+  
+  ;;var for outputs
+  is-waiting?
+  
+  ;;heuristics vars
+  last-avoiding-wall
+  last-avoiding-crowd
+  avoid-crowd?
+  cumul-stuck
+  crowd-ahead
+  
 ]
 
 
@@ -67,75 +95,24 @@ pietons-own[
 
 
 
-;;test functions with random configurations
-;;no real sense
-
-to setup-random
-  ca
-  reset-ticks
-  setup-globals
-  setup-random-configuration
-  setup-random-objective-points
-  setup-topo
-  setup-random-agents
-end
-
-to setup
-  ca
-  reset-ticks
-  setup-globals
-  setup-configuration
-  setup-topo
-  setup-random-agents
-end
-
-to setup-globals
-  set objectives [] set origins [] 
-  ask patches [set impedance 1 set is-wall? false]
-end
-
-to setup-random-configuration
-  ;;world is a torus omg
-  ;;ask patches [set impedance random-float 1]
-  ;;totally random distrib has really no sense
-  ;;try diffusion process
-  ask patches [set impedance 0 set is-wall? false]
-  ask n-of 5 patches [set impedance 1]
-  repeat 4 [diffuse impedance 0.5]
-  ;;add random obstacles
-  ;ask n-of floor (random count patches / 5) patches [set impedance 0 set is-wall? true]
-  ask patches with [impedance > 0] [set impedance 0 set is-wall? true]
-  ask patches with [not is-wall?][set impedance 1]
-  color-patches
-end
 
 
-;;import from gis files impedance field andobjectives points
-to setup-configuration
-  let objectives-layer gis:load-dataset "../Data/testobj.shp"
-  let impedance-layer gis:load-dataset "../Data/testwalls.shp"
-  gis:set-world-envelope gis:envelope-union-of (gis:envelope-of objectives-layer) (gis:envelope-of impedance-layer)
+to setup-agents
+  ;;fills the initial space with a given proportion of agents
+  ask pietons [die]
+  let init-number count patches with [is-initial?]
+  ask n-of  floor (init-number * initial-fill-prop / 100) patches with [is-initial?] [sprout-pietons 1 [new-pieton]]
+  attribute-trajectories
   
-  ;;create objectives: point dataset !
-  foreach gis:feature-list-of objectives-layer [foreach gis:vertex-lists-of ? [let loc gis:location-of first ? set objectives lput patch first loc last loc objectives]]
-  
-  ;;creates impedance field
-  
-  color-patches
+  set remaining-pietons pietons-number - count pietons
 end
 
-to color-patches
-  let ma max [impedance] of patches
-  let mi min [impedance] of patches
-  ifelse ma > mi [ask patches [set pcolor scale-color grey impedance mi ma]][ask patches [set pcolor white]]
-  if length objectives > 0 [foreach objectives [ ask ? [set pcolor red]]]
-end
 
 to setup-random-agents
   clear-drawing
   color-patches
   ask pietons [die]
-  repeat pietons-number [create-pietons 1 [new-pieton]]
+  repeat pietons-number [create-pietons 1 [new-random-pieton]]
   attribute-trajectories
   ;ask one-of pietons [foreach trajectory [ask ? [set pcolor blue]]]
 end
@@ -153,11 +130,20 @@ to setup-random-objective-points
   set objectives list o1 o2
 end
   
-to new-pieton
-  set shape pieton-shape set size patch-size / 10 set color orange
+to new-random-pieton
+  set shape pieton-shape set size patch-size / real-patch-size / 10 set color orange
   set mean-speed random-normal mean-mean-speed (sigma-mean-speed * mean-mean-speed / 100)
   set current-speed mean-speed
   move-to one-of patches with [not is-wall? and count pietons-here = 0]
+  if trace-routes? [pen-down]
+end
+
+to new-pieton
+  set shape pieton-shape set size patch-size / real-patch-size / 10 set color orange
+  set mean-speed random-normal mean-mean-speed (sigma-mean-speed * mean-mean-speed / 100)
+  set current-speed mean-speed
+  set is-waiting? false
+  set last-avoiding-wall 0 set last-avoiding-crowd 0 set avoid-crowd? false
   if trace-routes? [pen-down]
 end
 
@@ -175,7 +161,7 @@ to build-trajectories
   let x floor (min-pxcor + grid-size / 2) let y floor (min-pycor + grid-size / 2)
   repeat (floor (max-pxcor - min-pxcor) / grid-size) [
        repeat (floor (max-pycor - min-pycor) / grid-size) [
-          if not [is-wall?] of patch x y [set origins lput patch x y origins]
+          if [not is-wall?] of patch x y [set origins lput patch x y origins]
           set y y + grid-size
        ]
        set y floor (min-pycor + grid-size / 2)
@@ -195,22 +181,7 @@ to build-trajectories
       let traj []
       ask ? [let origin-node one-of abstract-nodes in-radius 1
         ask origin-node [
-             set traj fput patch-here traj
-             let path nw:weighted-path-to objective-node "d"
-             let nodes nw:turtles-on-weighted-path-to objective-node "d"
-             if path != false [
-                let cumulated-distance 0
-                ;;extract "by hand" intermediate points
-                foreach path [
-                  set cumulated-distance cumulated-distance + [d] of ?
-                  if cumulated-distance > grid-size [
-                    set traj lput [patch-here] of first nodes traj 
-                    set cumulated-distance 0 
-                  ]
-                  if length nodes > 0 [set nodes but-first nodes]
-                ]
-             ]
-             set traj lput [patch-here] of objective-node traj
+              set traj discrete-path-to objective-node
            ]
       ]
       
@@ -219,8 +190,28 @@ to build-trajectories
       
     ]
   ]
-  
-  
+end
+
+;;aux procedure to extract discrete path from travel
+to-report discrete-path-to [objective]
+  let traj []
+  set traj fput patch-here traj
+  let path nw:weighted-path-to objective "d"
+  let nodes nw:turtles-on-weighted-path-to objective "d"
+  if path != false [
+     let cumulated-distance 0
+     ;;extract "by hand" intermediate points
+     foreach path [
+       set cumulated-distance cumulated-distance + [d] of ?
+       if cumulated-distance > subpaths-length [
+         set traj lput [patch-here] of first nodes traj 
+         set cumulated-distance 0 
+       ]
+       if length nodes > 0 [set nodes but-first nodes]
+     ]
+  ]
+  set traj lput [patch-here] of objective traj
+  report traj
 end
 
 to-report hashcode [o de]
@@ -235,21 +226,29 @@ end
 
 to attribute-trajectories
   ask pietons [
-    ;;randomly attribute an exit ; may be weighted in a future
+    find-trajectory
+  ]
+end
+
+;;associated pieton procedure
+to find-trajectory
+  ;;randomly attribute an exit ; may be weighted in a future
     let dest one-of objectives
     let orig first sort-by [[distance myself] of ?1 < [distance myself] of ?2] origins
     set trajectory table:get trajectories hashcode orig dest
     ifelse length trajectory = 0 [die]
     [set current-target first trajectory
     set trajectory but-first trajectory]
-  ]
-  
 end
 
 ;;test for pietons movements
 ;;people are ghosts in that test
 ;;structure of movement will be the same
 to go
+  
+  ;;create new pietons if needed
+  new-arrivants
+  
   ask pietons [
     update-target
     update-direction
@@ -257,11 +256,31 @@ to go
     set color orange
   ]
   
+  ;;reroute people who want to avoid the crowd
+  reroute-some-people
+  
+  
   ;;DEBUG
   ;ask pietons with [count other pietons in-radius real-patch-size * time-step * current-speed / 4 > 0] [set color green]
   
   tick
 end
+
+to reroute-some-people
+   
+   
+end
+
+
+
+to new-arrivants
+  ;;here entry flow is not taken into account yet, max capacity ?
+  if remaining-pietons > 0 [
+    ask patches with [is-source? and count pietons-here = 0] [ if remaining-pietons > 0 [sprout-pietons 1 [new-pieton find-trajectory] set remaining-pietons remaining-pietons - 1]]
+  ]
+end
+
+
 
 ;;pieton procedure to update heading before move
 to update-direction
@@ -285,32 +304,71 @@ to update-direction
   ;;if high local density of people should also minimize that density ?
   
   ;;first handle walls evitment
-  let walls patches in-radius cone-radius with [self != [patch-here] of myself and impedance = 0]
+  ;;TODO memorize choice and don't do random when going along a wall
+  set avoid-crowd? false
+  let th 0
+  if current-target != patch-here [set th towards current-target]
+  
+  let walls patches in-cone cone-radius cone-angle with [self != [patch-here] of myself and impedance = 0]
   ifelse count walls > 0 [
-    let p patch (mean [pxcor] of walls) (mean [pycor] of walls) let h 0
-    ifelse p = patch-here [set h random 360][set h towards p]
-    set heading (walls-eviting-angle * (random 3 - 1)) + h 
+
+      let p patch (mean [pxcor] of walls) (mean [pycor] of walls) let h 0
+      ifelse p = patch-here [set h heading][set h towards p]
+      set heading ((direction (walls-eviting-angle + h) th) * walls-eviting-angle)
+
   ]
   
   ;;then treat "normal case"
-  [ifelse current-target != patch-here [set heading towards current-target][ifelse length trajectory > 0 [set heading towards first trajectory][set heading heading - 90 + random 180]]]
+  [if ticks - last-avoiding-crowd > 5 [ifelse current-target != patch-here [set heading towards current-target][ifelse length trajectory > 0 [set heading towards first trajectory][set heading heading - 90 + random 180]]]]
+  
   ;;finally, correction to avoid "condensation"
   if count other pietons in-cone (current-speed * time-step * real-patch-size) 120 != 0 [set heading heading - 50 + random 100]
+  
+  ;;add other correction against high densities
+  ;;and against "File effects"
+  ;;unfortunately, due to the internal implementation of Dijsktra,
+  ;;shortest path present recurrent patterns and
+  ;;"highways" are created. Against that, go left or right if too much people ahead
+  ;;(but greater cone of vision) !! small angle
+  ;;also need to add a memory for that !
+  let max-people (count patches in-cone overcrowding-radius overcrowding-angle)
+  if max-people != 0 [
+    set crowd-ahead (count pietons in-cone overcrowding-radius overcrowding-angle) / (count patches in-cone overcrowding-radius overcrowding-angle)
+    ;lets try with "deterministic" reroutings
+;    if crowd-ahead > overcrowding-threshold [
+;      set heading heading + toss-coin overcrowding-angle
+;      set last-avoiding-crowd ticks
+;      set avoid-crowd? true
+;    ]
+  ]
+;  
+  
+end
+
+to-report toss-coin [value]
+  ifelse random 2 = 0 [report value][report (- value)]
+end
+
+to-report direction [h1 h2]
+  ifelse cos (h1 - h2) > 0 [report 1][report (-1)]
 end
 
 ;;move procedure
 ;;speed is updated here
 to move
+  if cumul-stuck > 10 [die]
+  set is-waiting? false
   let step current-speed * time-step * real-patch-size
-  if can-move-ahead? step[
-    fd step
-  ]
+  ifelse can-move-ahead? step[
+    set cumul-stuck 0
+    fd step * [impedance] of patch-here
+  ][set is-waiting? true set cumul-stuck cumul-stuck + 1]
 end
 
 
 to-report can-move-ahead? [step]
   let p patch-ahead step if p = nobody [report false]
-  report [not is-wall?] of p and count other pietons in-cone step 60 = 0
+  report [not is-wall?] of p and count other pietons in-cone step 60 < impact-tolerance
 end
 
 
@@ -338,43 +396,37 @@ end
 
 
 
+;;exploration of linearity
+to evac-time
+  setup
+  set-current-plot "evac-time"
+  set-current-plot-pen "pen-0"
+  set-plot-pen-mode 0
+  set pietons-number 100
+  repeat 20[
+    setup-agents
+    reset-ticks
+    while [remaining-pietons > 0 or count pietons / pietons-number > 0.5][
+      go
+    ]
+    plotxy pietons-number ticks
+    set pietons-number pietons-number + 100
+  ]
 
-
-
-
-
-
-;;;;;;;;;;;;;;;;;
-;; Local utilities
-;;;;;;;;;;;;;;;;;
-
-to snapshot
-  nw:set-snapshot abstract-nodes abstract-links
-  ask abstract-links [let dd 0 ask end1 [set dd distance other-end] set d dd]
 end
 
-to build-abstract-network
-  ask patches with [not is-wall?] [sprout-abstract-nodes 1 [set hidden? true]]
-  ask abstract-nodes [create-abstract-links-with other abstract-nodes in-radius 1.5 [set hidden? true]]
-  snapshot
-end
 
-to test-network
-  ask abstract-links [set hidden? true] ask abstract-nodes [set hidden? true]
-  let o one-of abstract-nodes let dest nobody
-  ask o [set dest one-of other abstract-nodes]
-  snapshot
-  ask o [let path nw:weighted-path-to dest "d" if path != false [foreach path [ask ? [set hidden? false set color green]]]]
-end
+
+
 @#$#@#$#@
 GRAPHICS-WINDOW
 210
 10
-961
-600
-28
-21
-13.0
+730
+419
+42
+31
+6.0
 1
 10
 1
@@ -384,10 +436,10 @@ GRAPHICS-WINDOW
 0
 0
 1
--28
-28
--21
-21
+-42
+42
+-31
+31
 0
 0
 1
@@ -449,8 +501,8 @@ SLIDER
 pietons-number
 pietons-number
 0
-1000
-924
+3000
+688
 1
 1
 NIL
@@ -465,7 +517,7 @@ grid-size
 grid-size
 1
 world-width
-3
+2
 1
 1
 NIL
@@ -480,8 +532,8 @@ real-patch-size
 real-patch-size
 0
 10
-1
-1
+0.5
+0.1
 1
 NIL
 HORIZONTAL
@@ -532,10 +584,10 @@ trace-routes?
 BUTTON
 133
 11
-204
+207
 44
 NIL
-setup-random-agents
+setup-agents
 NIL
 1
 T
@@ -555,7 +607,7 @@ cone-radius
 cone-radius
 1
 20
-3
+1
 1
 1
 NIL
@@ -570,7 +622,7 @@ cone-angle
 cone-angle
 0
 360
-60
+92
 1
 1
 NIL
@@ -582,7 +634,7 @@ MONITOR
 90
 254
 remaining
-count pietons / pietons-number
+remaining-pietons
 17
 1
 11
@@ -609,12 +661,12 @@ SLIDER
 132
 1407
 165
-tolerance-radius
-tolerance-radius
+impact-tolerance
+impact-tolerance
 0
-5
+10
+10
 1
-0.1
 1
 NIL
 HORIZONTAL
@@ -638,11 +690,220 @@ walls-eviting-angle
 walls-eviting-angle
 0
 180
-147
+136
 1
 1
 NIL
 HORIZONTAL
+
+SLIDER
+1072
+355
+1221
+388
+overcrowding-radius
+overcrowding-radius
+0
+50
+3
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+1072
+393
+1219
+426
+overcrowding-angle
+overcrowding-angle
+0
+180
+31
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+1073
+432
+1219
+465
+overcrowding-threshold
+overcrowding-threshold
+0
+10
+5.5
+0.1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+912
+16
+1047
+49
+density-coef
+density-coef
+0
+2
+1.1
+0.1
+1
+NIL
+HORIZONTAL
+
+INPUTBOX
+1224
+530
+1358
+590
+impedance-file
+../Data/impedanceGare.shp
+1
+0
+String
+
+INPUTBOX
+1226
+592
+1358
+652
+obj-file
+../Data/objectives.shp
+1
+0
+String
+
+SLIDER
+1051
+94
+1223
+127
+initial-fill-prop
+initial-fill-prop
+0
+100
+50
+1
+1
+NIL
+HORIZONTAL
+
+MONITOR
+739
+16
+814
+61
+time (min)
+ticks * time-step / 60
+17
+1
+11
+
+MONITOR
+15
+257
+98
+302
+trajectories
+table:length trajectories * 100 / (length origins * length objectives)
+17
+1
+11
+
+PLOT
+740
+74
+900
+194
+Waiting people
+NIL
+NIL
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"default" 1.0 0 -16777216 true "" "if count pietons > 0 [plot 100 * count pietons with [is-waiting?] / count pietons]"
+
+MONITOR
+15
+162
+74
+207
+pietons
+count pietons
+17
+1
+11
+
+SLIDER
+1225
+230
+1397
+263
+subpaths-length
+subpaths-length
+0
+10
+5
+1
+1
+NIL
+HORIZONTAL
+
+MONITOR
+15
+305
+126
+350
+prop-overcr (%)
+100 * count pietons with [avoid-crowd?] / count pietons
+17
+1
+11
+
+PLOT
+745
+206
+945
+356
+evac-time
+people number
+time
+0.0
+10.0
+0.0
+10.0
+true
+false
+"" ""
+PENS
+"pen-0" 1.0 0 -16777216 true "" ""
+
+BUTTON
+14
+379
+107
+412
+NIL
+evac-time
+NIL
+1
+T
+OBSERVER
+NIL
+NIL
+NIL
+NIL
+1
 
 @#$#@#$#@
 ## WHAT IS IT?

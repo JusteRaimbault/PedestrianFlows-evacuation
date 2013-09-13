@@ -1,0 +1,75 @@
+;;test functions with random configurations
+;;no real sense
+
+to setup-random
+  ca
+  reset-ticks
+  setup-globals
+  setup-random-configuration
+  setup-random-objective-points
+  setup-topo
+  setup-random-agents
+end
+
+to setup
+  ca
+  reset-ticks
+  setup-globals
+  setup-configuration
+  setup-topo
+  setup-agents
+end
+
+to setup-globals
+  set objectives [] set origins [] 
+  ask patches [set impedance 1 set is-wall? false]
+end
+
+to setup-random-configuration
+  ;;world is a torus omg
+  ;;ask patches [set impedance random-float 1]
+  ;;totally random distrib has really no sense
+  ;;try diffusion process
+  ask patches [set impedance 0 set is-wall? false]
+  ask n-of 5 patches [set impedance 1]
+  repeat 4 [diffuse impedance 0.5]
+  ;;add random obstacles
+  ;ask n-of floor (random count patches / 5) patches [set impedance 0 set is-wall? true]
+  ask patches with [impedance > 0] [set impedance 0 set is-wall? true]
+  ask patches with [not is-wall?][set impedance 1]
+  color-patches
+end
+
+
+;;import from gis files impedance field andobjectives points
+to setup-configuration
+  ;;init patches
+  ask patches [set is-wall? false set is-initial? false set is-source? false set impedance 1]
+  
+  let objectives-layer gis:load-dataset obj-file
+  let impedance-layer gis:load-dataset impedance-file
+  ;gis:set-world-envelope gis:envelope-union-of (gis:envelope-of objectives-layer) (gis:envelope-of impedance-layer)
+  gis:set-world-envelope gis:envelope-of gis:load-dataset "../Data/enveloppe.shp"
+  
+  ;;create objectives: point dataset !
+  foreach gis:feature-list-of objectives-layer [foreach gis:vertex-lists-of ? [let loc gis:location-of first ? set objectives lput patch first loc last loc objectives]]
+  
+  ;;creates impedance field
+  ;;polygon dataset
+  foreach gis:feature-list-of impedance-layer [
+    ;obliged to go through all patches, should not be disturbing if layer size stays reasonnable 
+     ask patches with [gis:contains? ? self or gis:intersects? ? self] [set impedance gis:property-value ? "impedance"]
+  ]
+  ;;don't forget to set wall property
+  ask patches with [impedance = 0] [set is-wall? true]
+  ask patches [set pcolor white]
+  
+  ;;draws plan
+  gis:set-drawing-color blue gis:draw gis:load-dataset "../Data/planGare.shp" 1
+  
+  ;;load initial position
+  foreach gis:feature-list-of gis:load-dataset "../Data/initialPositions.shp" [ask patches with [(gis:contains? ? self or gis:intersects? ? self) and not is-wall?] [set is-initial? true]]
+  foreach gis:feature-list-of gis:load-dataset "../Data/arrivalPositions.shp" [ask patches with [(gis:contains? ? self or gis:intersects? ? self) and not is-wall?] [set is-source? true]]
+  
+  color-patches
+end
