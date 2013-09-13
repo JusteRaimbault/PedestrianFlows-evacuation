@@ -225,7 +225,7 @@ to go
   ]
   
   ;;reroute people who want to avoid the crowd
-  reroute-some-people
+  if reroute? [reroute-some-people]
   
   
   ;;DEBUG
@@ -411,6 +411,13 @@ to evac-time
 end
 
 
+to go-evac
+  while [remaining-pietons > 0 or count pietons / pietons-number > 0.5][
+      go
+  ]
+end
+
+
 
 
 @#$#@#$#@
@@ -435,8 +442,8 @@ GRAPHICS-WINDOW
 42
 -31
 31
-0
-0
+1
+1
 1
 ticks
 30.0
@@ -497,7 +504,7 @@ pietons-number
 pietons-number
 0
 3000
-688
+3000
 1
 1
 NIL
@@ -554,8 +561,8 @@ BUTTON
 136
 151
 go
-go\n;if count pietons with [count other pietons in-radius real-patch-size * time-step * current-speed / 4 > 0] > 0[\n; error \"ghosts !\"\n;]
-T
+go-evac\n;if count pietons with [count other pietons in-radius real-patch-size * time-step * current-speed / 4 > 0] > 0[\n; error \"ghosts !\"\n;]
+NIL
 1
 T
 OBSERVER
@@ -617,7 +624,7 @@ cone-angle
 cone-angle
 0
 360
-92
+138
 1
 1
 NIL
@@ -685,7 +692,7 @@ walls-eviting-angle
 walls-eviting-angle
 0
 180
-136
+80
 1
 1
 NIL
@@ -757,7 +764,7 @@ INPUTBOX
 1358
 590
 impedance-file
-../Data/impedanceGare.shp
+../Data/impedanceGareModified.shp
 1
 0
 String
@@ -909,7 +916,7 @@ reroute-prop
 reroute-prop
 0
 100
-13
+6
 1
 1
 NIL
@@ -925,6 +932,17 @@ prop-rerouted
 17
 1
 11
+
+SWITCH
+1076
+508
+1185
+541
+reroute?
+reroute?
+0
+1
+-1000
 
 @#$#@#$#@
 ## WHAT IS IT?
