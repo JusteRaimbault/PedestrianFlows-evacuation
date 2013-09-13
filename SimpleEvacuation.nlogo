@@ -79,6 +79,7 @@ pietons-own[
   
   ;;var for outputs
   is-waiting?
+  is-rerouted?
   
   ;;heuristics vars
   last-avoiding-wall
@@ -96,39 +97,6 @@ pietons-own[
 
 
 
-
-to setup-agents
-  ;;fills the initial space with a given proportion of agents
-  ask pietons [die]
-  let init-number count patches with [is-initial?]
-  ask n-of  floor (init-number * initial-fill-prop / 100) patches with [is-initial?] [sprout-pietons 1 [new-pieton]]
-  attribute-trajectories
-  
-  set remaining-pietons pietons-number - count pietons
-end
-
-
-to setup-random-agents
-  clear-drawing
-  color-patches
-  ask pietons [die]
-  repeat pietons-number [create-pietons 1 [new-random-pieton]]
-  attribute-trajectories
-  ;ask one-of pietons [foreach trajectory [ask ? [set pcolor blue]]]
-end
-
-to setup-topo  
-  build-abstract-network
-  build-trajectories
-end
-  
-to setup-random-objective-points
-  ;;set objective points, let say corners
-  let o1 one-of patches with [not is-wall?]
-  let o2 one-of patches with [not is-wall? and self != o1]
-  ask o1 [set pcolor red] ask o2 [set pcolor red]
-  set objectives list o1 o2
-end
   
 to new-random-pieton
   set shape pieton-shape set size patch-size / real-patch-size / 10 set color orange
@@ -267,8 +235,34 @@ to go
 end
 
 to reroute-some-people
-   
-   
+  ask pietons [set is-rerouted? false];debug prpose, delete in efficient run
+  snapshot
+  let changers (max-n-of (reroute-prop * (count pietons) / 100) pietons [crowd-ahead]) with [length trajectory > 0]
+  ;;this list will contains O/D couples for which we have to recalculate trajectories
+  ;;we update in map
+  let new-trajectories []
+  ask changers [
+     let new-origin nobody let dest last trajectory
+     ;;heads towards new dir, find origins
+     set heading heading + toss-coin 90
+     set new-origin one-of patches in-cone 8 60 with [member? self origins and distance myself > 5]
+     if new-origin != nobody [set new-trajectories lput (list new-origin dest) new-trajectories set trajectory (list new-origin dest)]
+  ]
+  ;;recalculate, suppsoe to take density into account
+  foreach new-trajectories [
+    let o first ? let dest last ?
+     ask o [
+       let traj discrete-path-to dest
+       table:put trajectories hashcode o dest traj
+     ]
+  ]
+  ;;reattribute traj to people
+  ask changers with [length trajectory = 2][
+    set trajectory table:get trajectories hashcode (first trajectory) (last trajectory)
+    set current-target first trajectory
+    set is-rerouted? true
+  ]
+  
 end
 
 
@@ -889,10 +883,10 @@ PENS
 "pen-0" 1.0 0 -16777216 true "" ""
 
 BUTTON
-14
-379
-107
-412
+13
+533
+106
+566
 NIL
 evac-time
 NIL
@@ -904,6 +898,32 @@ NIL
 NIL
 NIL
 1
+
+SLIDER
+1074
+468
+1216
+501
+reroute-prop
+reroute-prop
+0
+100
+30
+1
+1
+NIL
+HORIZONTAL
+
+MONITOR
+15
+353
+119
+398
+prop-rerouted
+100 * count pietons with [is-rerouted?] / count pietons
+17
+1
+11
 
 @#$#@#$#@
 ## WHAT IS IT?

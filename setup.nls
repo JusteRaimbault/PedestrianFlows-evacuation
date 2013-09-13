@@ -73,3 +73,39 @@ to setup-configuration
   
   color-patches
 end
+
+
+
+
+to setup-agents
+  ;;fills the initial space with a given proportion of agents
+  ask pietons [die]
+  let init-number count patches with [is-initial?]
+  ask n-of  floor (init-number * initial-fill-prop / 100) patches with [is-initial?] [sprout-pietons 1 [new-pieton]]
+  attribute-trajectories
+  
+  set remaining-pietons pietons-number - count pietons
+end
+
+
+to setup-random-agents
+  clear-drawing
+  color-patches
+  ask pietons [die]
+  repeat pietons-number [create-pietons 1 [new-random-pieton]]
+  attribute-trajectories
+  ;ask one-of pietons [foreach trajectory [ask ? [set pcolor blue]]]
+end
+
+to setup-topo  
+  build-abstract-network
+  build-trajectories
+end
+  
+to setup-random-objective-points
+  ;;set objective points, let say corners
+  let o1 one-of patches with [not is-wall?]
+  let o2 one-of patches with [not is-wall? and self != o1]
+  ask o1 [set pcolor red] ask o2 [set pcolor red]
+  set objectives list o1 o2
+end
