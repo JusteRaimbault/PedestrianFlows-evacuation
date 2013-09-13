@@ -250,10 +250,11 @@ to reroute-some-people
   ]
   ;;recalculate, suppsoe to take density into account
   foreach new-trajectories [
-    let o first ? let dest last ?
+    let o-patch first ? let dest-patch last ?
+    let o nobody let dest nobody ask o-patch [set o one-of abstract-nodes in-radius 1] ask dest-patch [set dest one-of abstract-nodes in-radius 1]
      ask o [
        let traj discrete-path-to dest
-       table:put trajectories hashcode o dest traj
+       table:put trajectories hashcode o-patch dest-patch traj
      ]
   ]
   ;;reattribute traj to people
@@ -908,7 +909,7 @@ reroute-prop
 reroute-prop
 0
 100
-30
+13
 1
 1
 NIL
